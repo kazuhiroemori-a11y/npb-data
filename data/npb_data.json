@@ -1,0 +1,19 @@
+{
+  "_readme": "このファイルは npb_scraper.py によって自動更新されます",
+  "2026": {
+    "year": 2026,
+    "fetched_at": null,
+    "standings": { "central": [], "pacific": [] },
+    "batters": [],
+    "pitchers": [],
+    "meta": { "source": "https://baseballdata.jp", "pages_fetched": 0 }
+  },
+  "2025": {
+    "year": 2025,
+    "fetched_at": null,
+    "standings": { "central": [], "pacific": [] },
+    "batters": [],
+    "pitchers": [],
+    "meta": { "source": "https://baseballdata.jp", "pages_fetched": 0 }
+  }
+}

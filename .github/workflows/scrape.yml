@@ -1,0 +1,126 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# NPB Sabermetrics 自動データ更新ワークフロー
+# 毎日 00:30 JST に baseballdata.jp からデータを取得し
+# GitHub Pages で公開します。
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+name: 📊 NPB データ自動更新
+
+on:
+  schedule:
+    # 毎日 00:30 JST = 前日 15:30 UTC
+    - cron: '30 15 * * *'
+
+  # GitHub UI から手動実行も可能
+  workflow_dispatch:
+    inputs:
+      year:
+        description: '取得年度（例: 2026）空白で両年度取得'
+        required: false
+        default: ''
+      force:
+        description: '変更なしでも強制コミット (true/false)'
+        required: false
+        default: 'false'
+
+# データファイルをリポジトリにプッシュする権限
+permissions:
+  contents: write
+
+jobs:
+  scrape-and-publish:
+    name: スクレイプ & 公開
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      # ── 1. リポジトリをチェックアウト ──────────────────────
+      - name: ① リポジトリをチェックアウト
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # ── 2. Python セットアップ ─────────────────────────────
+      - name: ② Python 3.11 セットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      # ── 3. 依存パッケージインストール ──────────────────────
+      - name: ③ 依存パッケージをインストール
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # ── 4. スクレイパー実行 ────────────────────────────────
+      - name: ④ データをスクレイプ
+        id: scrape
+        run: |
+          # 手動実行で年度指定があれば単年、なければ両年度
+          if [ -n "${{ github.event.inputs.year }}" ]; then
+            echo "🗓️  指定年度: ${{ github.event.inputs.year }}"
+            python3 npb_scraper.py \
+              --year ${{ github.event.inputs.year }} \
+              --output data/npb_data.json
+          else
+            echo "🗓️  両年度（2025・2026）取得"
+            python3 npb_scraper.py \
+              --both \
+              --output data/npb_data.json
+          fi
+
+          # 取得結果をサマリーに出力
+          python3 - << 'PYEOF'
+          import json, datetime
+          try:
+              with open("data/npb_data.json") as f:
+                  d = json.load(f)
+              for y, v in d.items():
+                  b = len(v.get("batters", []))
+                  p = len(v.get("pitchers", []))
+                  cs = len(v.get("standings", {}).get("central", []))
+                  ps = len(v.get("standings", {}).get("pacific", []))
+                  print(f"  {y}年度: セ{cs}/パ{ps}チーム | 打者{b}名 | 投手{p}名")
+          except Exception as e:
+              print(f"  サマリー生成エラー: {e}")
+          PYEOF
+
+      # ── 5. 変更があればコミット＆プッシュ ─────────────────
+      - name: ⑤ 変更をコミット＆プッシュ
+        run: |
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --local user.name  "github-actions[bot]"
+
+          git add data/npb_data.json
+
+          if git diff --staged --quiet; then
+            FORCE="${{ github.event.inputs.force }}"
+            if [ "${FORCE}" = "true" ]; then
+              echo "⚠️  強制コミット指定のため更新なしでもコミット"
+              git commit --allow-empty -m "📊 NPBデータ強制更新 $(TZ=Asia/Tokyo date +'%Y-%m-%d %H:%M JST')"
+              git push
+            else
+              echo "✅ データに変更なし（本日は試合なしの可能性）"
+            fi
+          else
+            TIMESTAMP=$(TZ=Asia/Tokyo date +'%Y-%m-%d %H:%M JST')
+            BATTERS=$(python3 -c "import json; d=json.load(open('data/npb_data.json')); print(sum(len(v.get('batters',[])) for v in d.values()))" 2>/dev/null || echo "?")
+            git commit -m "📊 NPBデータ更新 ${TIMESTAMP} (打者${BATTERS}名)"
+            git push
+            echo "✅ データを更新しました（打者${BATTERS}名）"
+          fi
+
+      # ── 6. 実行サマリー ────────────────────────────────────
+      - name: ⑥ 実行サマリー
+        if: always()
+        run: |
+          echo "### 実行結果" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| 項目 | 内容 |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 実行時刻 | $(TZ=Asia/Tokyo date +'%Y-%m-%d %H:%M JST') |" >> $GITHUB_STEP_SUMMARY
+          echo "| 公開URL | https://\${{ github.repository_owner }}.github.io/\${{ github.event.repository.name }}/data/npb_data.json |" >> $GITHUB_STEP_SUMMARY
+          if [ -f data/npb_data.json ]; then
+            SIZE=$(du -sh data/npb_data.json | cut -f1)
+            echo "| ファイルサイズ | ${SIZE} |" >> $GITHUB_STEP_SUMMARY
+          fi
